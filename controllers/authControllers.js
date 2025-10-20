@@ -134,8 +134,8 @@ const authControllers = {
         res.cookie('refreshToken', refreshToken, {
           httpOnly: true,
           path: '/',
-          secure: false,
-          sameSite: 'strict',
+          secure: process.env.NODE_ENV === 'production', // true on production HTTPS
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
           maxAge: 30 * 24 * 60 * 60 * 1000,
         });
         console.log('Cookie set successfully');
@@ -144,6 +144,7 @@ const authControllers = {
         res.status(200).json({ user: userAuth, accessToken });
       }
     } catch (error) {
+      console.error('Login error stack:', error);
       res.status(500).send('Error logging in');
     }
   },
@@ -226,227 +227,227 @@ const authControllers = {
   },
 
   // ====== Đăng ký + xác minh email ======
-   startRegistration: async (req, res) => {
-  try {
-    const { firstName, lastName, phone, email, password } = req.body || {};
-
-    // Kiểm tra các trường dữ liệu
-    if (!firstName || !lastName || !phone || !email || !password) {
-      return res.status(400).json({ success: false, error: 'Thiếu thông tin.' });
-    }
-
-    // Kiểm tra nếu email đã tồn tại trong PendingUser
-    const pendingUserExists = await PendingUser.findOne({ email });
-    if (pendingUserExists) {
-      return res.status(409).json({ success: false, error: 'Email đã tồn tại trong danh sách chờ xác minh.' });
-    }
-
-    // Kiểm tra email trong Users (tránh trùng lặp với người dùng đã xác minh)
-    const userExists = await User.findOne({ email });
-    if (userExists) {
-      return res.status(409).json({ success: false, error: 'Email đã tồn tại trong hệ thống.' });
-    }
-
-    const code = generateCode(8);  // Tạo mã xác minh
-    const hashed = await bcrypt.hash(password, 10);  // Mã hóa mật khẩu
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);  // Mã hết hạn sau 10 phút
-
-    // Lưu thông tin vào PendingUser
-    const pendingUser = new PendingUser({
-      firstName, lastName, phone, email, password: hashed, verificationCode: code, expiresAt
-    });
-    await pendingUser.save();
-
-    // Gửi email xác minh
-    await sendVerificationCode(email, code);
-
-    return res.json({ success: true, message: 'Đã gửi mã xác minh tới email.' });
-  } catch (err) {
-    console.error('Error during registration:', err);
-    return res.status(500).json({ success: false, error: 'Lỗi máy chủ.' });
-  }
-},
-
-  verifyRegistration: async (req, res) => {
-  try {
-    const { email, code } = req.body || {};
-    if (!email || !code) return res.status(400).json({ success: false, error: 'Thiếu email hoặc mã xác minh.' });
-
-    // Tìm PendingUser
-    const pending = await PendingUser.findOne({ email });
-    if (!pending) return res.status(404).json({ success: false, error: 'Không tìm thấy yêu cầu đăng ký.' });
-
-    // Kiểm tra mã xác minh
-    if (pending.verificationCode !== code) {
-      return res.status(400).json({ success: false, error: 'Mã xác minh không đúng.' });
-    }
-
-    // Kiểm tra mã hết hạn
-    if (pending.expiresAt < new Date()) {
-      await PendingUser.deleteOne({ _id: pending._id });
-      return res.status(410).json({ success: false, error: 'Mã xác minh đã hết hạn.' });
-    }
-
-    // Tạo người dùng mới
-    const newUser = new User({
-      username: email,   // Bạn có thể thay thế bằng `firstName` hoặc bất kỳ trường nào khác
-      email,
-      password: pending.password,  // Sử dụng mật khẩu đã mã hóa từ PendingUser
-      role: 'user',   // Gán role mặc định hoặc lấy từ input
-    });
-
-    // Lưu người dùng vào bảng Users
-    await newUser.save();
-
-    // Xóa PendingUser để tránh trùng lặp
-    await PendingUser.deleteOne({ _id: pending._id });
-
-    // Tạo JWT tokens cho người dùng
-    const accessToken = jwt.sign({ id: newUser._id, role: newUser.role }, process.env.JWT_SECRET, { expiresIn: '15m' });
-    const refreshToken = jwt.sign({ id: newUser._id, role: newUser.role }, process.env.REFRESH_JWT_SECRET, { expiresIn: '30d' });
-
-    // Hash & save refresh token to user.retoken
+  startRegistration: async (req, res) => {
     try {
-      const salt = await bcrypt.genSalt(10);
-      const hashed = await bcrypt.hash(refreshToken, salt);
-      newUser.retoken = hashed;
-      await newUser.save();
-    } catch (e) {
-      console.error('Error saving retoken on registration verify:', e);
-    }
+      const { firstName, lastName, phone, email, password } = req.body || {};
 
-    // Set cookie
-    res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      path: '/',
-      secure: false,
-      sameSite: 'strict',
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-    });
+      // Kiểm tra các trường dữ liệu
+      if (!firstName || !lastName || !phone || !email || !password) {
+        return res.status(400).json({ success: false, error: 'Thiếu thông tin.' });
+      }
 
-    // Trả về thông tin người dùng và accessToken (refresh stored in cookie)
-    const { password, ...userSafe } = newUser._doc;
-    return res.json({ success: true, message: 'Đăng ký thành công.', data: { user: userSafe, accessToken } });
-  } catch (err) {
-    console.error('Error verifying registration:', err);
-    return res.status(500).json({ success: false, error: 'Lỗi máy chủ.' });
-  }
-},
+      // Kiểm tra nếu email đã tồn tại trong PendingUser
+      const pendingUserExists = await PendingUser.findOne({ email });
+      if (pendingUserExists) {
+        return res.status(409).json({ success: false, error: 'Email đã tồn tại trong danh sách chờ xác minh.' });
+      }
 
+      // Kiểm tra email trong Users (tránh trùng lặp với người dùng đã xác minh)
+      const userExists = await User.findOne({ email });
+      if (userExists) {
+        return res.status(409).json({ success: false, error: 'Email đã tồn tại trong hệ thống.' });
+      }
 
-verifyPasswordResetCode: async (req, res) => {
-  const { email, code } = req.body;
+      const code = generateCode(8);  // Tạo mã xác minh
+      const hashed = await bcrypt.hash(password, 10);  // Mã hóa mật khẩu
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);  // Mã hết hạn sau 10 phút
 
-  if (!email || !code) {
-    return res.status(400).json({ success: false, error: 'Thiếu email hoặc mã xác minh.' });
-  }
-
-  try {
-    const pendingUser = await PendingUserPasswordReset.findOne({ email });
-    if (!pendingUser) return res.status(404).json({ success: false, error: 'Không tìm thấy yêu cầu quên mật khẩu.' });
-
-    if (pendingUser.verificationCode !== code) {
-      return res.status(400).json({ success: false, error: 'Mã xác minh không đúng.' });
-    }
-
-    if (pendingUser.expiresAt < new Date()) {
-      await PendingUserPasswordReset.deleteOne({ email });
-      return res.status(410).json({ success: false, error: 'Mã xác minh đã hết hạn.' });
-    }
-
-    // Mã xác minh hợp lệ, cho phép người dùng thay đổi mật khẩu
-    return res.json({ success: true, message: 'Mã xác minh hợp lệ. Bạn có thể thay đổi mật khẩu.' });
-  } catch (err) {
-    console.error('Error in verifyPasswordResetCode:', err);
-    return res.status(500).json({ success: false, error: 'Lỗi máy chủ.' });
-  }
-},
-
-// backend/controllers/authControllers.js
-
-forgotPassword: async (req, res) => {
-  const { email } = req.body;
-  if (!email) {
-    return res.status(400).json({ success: false, error: 'Email không hợp lệ.' });
-  }
-
-  try {
-    // Kiểm tra email có trong hệ thống không
-    const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ success: false, error: 'Email không tồn tại.' });
-
-    // Tạo mã xác minh
-    const code = Math.floor(100000 + Math.random() * 900000);  // Tạo mã 6 chữ số
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);  // Hết hạn trong 10 phút
-
-    // Kiểm tra xem email đã tồn tại trong PendingUserPasswordReset chưa
-    const existingPendingUser = await PendingUserPasswordReset.findOne({ email });
-
-    if (existingPendingUser) {
-      // Nếu đã tồn tại, cập nhật lại mã xác minh và thời gian hết hạn
-      existingPendingUser.verificationCode = code;
-      existingPendingUser.expiresAt = expiresAt;
-      await existingPendingUser.save();
-      console.log('Đã cập nhật mã xác minh cho email:', email);
-    } else {
-      // Nếu chưa tồn tại, tạo mới PendingUserPasswordReset
-      const pendingUser = new PendingUserPasswordReset({
-        email,
-        verificationCode: code,
-        expiresAt,
+      // Lưu thông tin vào PendingUser
+      const pendingUser = new PendingUser({
+        firstName, lastName, phone, email, password: hashed, verificationCode: code, expiresAt
       });
       await pendingUser.save();
-      console.log('Đã tạo mới yêu cầu reset mật khẩu cho email:', email);
+
+      // Gửi email xác minh
+      await sendVerificationCode(email, code);
+
+      return res.json({ success: true, message: 'Đã gửi mã xác minh tới email.' });
+    } catch (err) {
+      console.error('Error during registration:', err);
+      return res.status(500).json({ success: false, error: 'Lỗi máy chủ.' });
+    }
+  },
+
+  verifyRegistration: async (req, res) => {
+    try {
+      const { email, code } = req.body || {};
+      if (!email || !code) return res.status(400).json({ success: false, error: 'Thiếu email hoặc mã xác minh.' });
+
+      // Tìm PendingUser
+      const pending = await PendingUser.findOne({ email });
+      if (!pending) return res.status(404).json({ success: false, error: 'Không tìm thấy yêu cầu đăng ký.' });
+
+      // Kiểm tra mã xác minh
+      if (pending.verificationCode !== code) {
+        return res.status(400).json({ success: false, error: 'Mã xác minh không đúng.' });
+      }
+
+      // Kiểm tra mã hết hạn
+      if (pending.expiresAt < new Date()) {
+        await PendingUser.deleteOne({ _id: pending._id });
+        return res.status(410).json({ success: false, error: 'Mã xác minh đã hết hạn.' });
+      }
+
+      // Tạo người dùng mới
+      const newUser = new User({
+        username: email,   // Bạn có thể thay thế bằng `firstName` hoặc bất kỳ trường nào khác
+        email,
+        password: pending.password,  // Sử dụng mật khẩu đã mã hóa từ PendingUser
+        role: 'user',   // Gán role mặc định hoặc lấy từ input
+      });
+
+      // Lưu người dùng vào bảng Users
+      await newUser.save();
+
+      // Xóa PendingUser để tránh trùng lặp
+      await PendingUser.deleteOne({ _id: pending._id });
+
+      // Tạo JWT tokens cho người dùng
+      const accessToken = jwt.sign({ id: newUser._id, role: newUser.role }, process.env.JWT_SECRET, { expiresIn: '15m' });
+      const refreshToken = jwt.sign({ id: newUser._id, role: newUser.role }, process.env.REFRESH_JWT_SECRET, { expiresIn: '30d' });
+
+      // Hash & save refresh token to user.retoken
+      try {
+        const salt = await bcrypt.genSalt(10);
+        const hashed = await bcrypt.hash(refreshToken, salt);
+        newUser.retoken = hashed;
+        await newUser.save();
+      } catch (e) {
+        console.error('Error saving retoken on registration verify:', e);
+      }
+
+      // Set cookie
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        path: '/',
+        secure: false,
+        sameSite: 'strict',
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+      });
+
+      // Trả về thông tin người dùng và accessToken (refresh stored in cookie)
+      const { password, ...userSafe } = newUser._doc;
+      return res.json({ success: true, message: 'Đăng ký thành công.', data: { user: userSafe, accessToken } });
+    } catch (err) {
+      console.error('Error verifying registration:', err);
+      return res.status(500).json({ success: false, error: 'Lỗi máy chủ.' });
+    }
+  },
+
+
+  verifyPasswordResetCode: async (req, res) => {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({ success: false, error: 'Thiếu email hoặc mã xác minh.' });
     }
 
-    // Gửi mã xác minh qua email
-    await sendVerificationCode(email, code);
+    try {
+      const pendingUser = await PendingUserPasswordReset.findOne({ email });
+      if (!pendingUser) return res.status(404).json({ success: false, error: 'Không tìm thấy yêu cầu quên mật khẩu.' });
 
-    return res.json({ success: true, message: 'Mã xác minh đã được gửi tới email của bạn.' });
-  } catch (err) {
-    console.error('Error in forgotPassword:', err);
-    return res.status(500).json({ success: false, error: 'Lỗi máy chủ.' });
-  }
-},
+      if (pendingUser.verificationCode !== code) {
+        return res.status(400).json({ success: false, error: 'Mã xác minh không đúng.' });
+      }
+
+      if (pendingUser.expiresAt < new Date()) {
+        await PendingUserPasswordReset.deleteOne({ email });
+        return res.status(410).json({ success: false, error: 'Mã xác minh đã hết hạn.' });
+      }
+
+      // Mã xác minh hợp lệ, cho phép người dùng thay đổi mật khẩu
+      return res.json({ success: true, message: 'Mã xác minh hợp lệ. Bạn có thể thay đổi mật khẩu.' });
+    } catch (err) {
+      console.error('Error in verifyPasswordResetCode:', err);
+      return res.status(500).json({ success: false, error: 'Lỗi máy chủ.' });
+    }
+  },
+
+  // backend/controllers/authControllers.js
+
+  forgotPassword: async (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, error: 'Email không hợp lệ.' });
+    }
+
+    try {
+      // Kiểm tra email có trong hệ thống không
+      const user = await User.findOne({ email });
+      if (!user) return res.status(404).json({ success: false, error: 'Email không tồn tại.' });
+
+      // Tạo mã xác minh
+      const code = Math.floor(100000 + Math.random() * 900000);  // Tạo mã 6 chữ số
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);  // Hết hạn trong 10 phút
+
+      // Kiểm tra xem email đã tồn tại trong PendingUserPasswordReset chưa
+      const existingPendingUser = await PendingUserPasswordReset.findOne({ email });
+
+      if (existingPendingUser) {
+        // Nếu đã tồn tại, cập nhật lại mã xác minh và thời gian hết hạn
+        existingPendingUser.verificationCode = code;
+        existingPendingUser.expiresAt = expiresAt;
+        await existingPendingUser.save();
+        console.log('Đã cập nhật mã xác minh cho email:', email);
+      } else {
+        // Nếu chưa tồn tại, tạo mới PendingUserPasswordReset
+        const pendingUser = new PendingUserPasswordReset({
+          email,
+          verificationCode: code,
+          expiresAt,
+        });
+        await pendingUser.save();
+        console.log('Đã tạo mới yêu cầu reset mật khẩu cho email:', email);
+      }
+
+      // Gửi mã xác minh qua email
+      await sendVerificationCode(email, code);
+
+      return res.json({ success: true, message: 'Mã xác minh đã được gửi tới email của bạn.' });
+    } catch (err) {
+      console.error('Error in forgotPassword:', err);
+      return res.status(500).json({ success: false, error: 'Lỗi máy chủ.' });
+    }
+  },
 
 
 
-resetPassword: async (req, res) => {
+  resetPassword: async (req, res) => {
     let { email, code, newPassword, password } = req.body;
-  newPassword = newPassword || password; // chấp nhận password
+    newPassword = newPassword || password; // chấp nhận password
 
-  if (!email || !code || !newPassword) {
-    return res.status(400).json({ success:false, error:'Thiếu email, mã xác minh hoặc mật khẩu mới.' });
-  }
-
-
-  try {
-    const pending = await PendingUserPasswordReset.findOne({ email });
-    if (!pending) return res.status(404).json({ success: false, error: 'Không tìm thấy yêu cầu quên mật khẩu.' });
-
-    if (pending.verificationCode !== code) {
-      return res.status(400).json({ success: false, error: 'Mã xác minh không đúng.' });
+    if (!email || !code || !newPassword) {
+      return res.status(400).json({ success: false, error: 'Thiếu email, mã xác minh hoặc mật khẩu mới.' });
     }
 
-    if (pending.expiresAt < new Date()) {
+
+    try {
+      const pending = await PendingUserPasswordReset.findOne({ email });
+      if (!pending) return res.status(404).json({ success: false, error: 'Không tìm thấy yêu cầu quên mật khẩu.' });
+
+      if (pending.verificationCode !== code) {
+        return res.status(400).json({ success: false, error: 'Mã xác minh không đúng.' });
+      }
+
+      if (pending.expiresAt < new Date()) {
+        await PendingUserPasswordReset.deleteOne({ _id: pending._id });
+        return res.status(410).json({ success: false, error: 'Mã xác minh đã hết hạn.' });
+      }
+
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+      // Cập nhật mật khẩu mới vào bảng Users
+      await User.findOneAndUpdate({ email }, { password: hashedPassword }, { new: true });
+
+      // Xóa PendingUserPasswordReset
       await PendingUserPasswordReset.deleteOne({ _id: pending._id });
-      return res.status(410).json({ success: false, error: 'Mã xác minh đã hết hạn.' });
+
+      return res.json({ success: true, message: 'Mật khẩu đã được thay đổi thành công.' });
+    } catch (err) {
+      console.error('Error resetting password:', err);
+      return res.status(500).json({ success: false, error: 'Lỗi máy chủ.' });
     }
-
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-    // Cập nhật mật khẩu mới vào bảng Users
-    await User.findOneAndUpdate({ email }, { password: hashedPassword }, { new: true });
-
-    // Xóa PendingUserPasswordReset
-    await PendingUserPasswordReset.deleteOne({ _id: pending._id });
-
-    return res.json({ success: true, message: 'Mật khẩu đã được thay đổi thành công.' });
-  } catch (err) {
-    console.error('Error resetting password:', err);
-    return res.status(500).json({ success: false, error: 'Lỗi máy chủ.' });
-  }
-},
+  },
 
   resendCode: async (req, res) => {
     try {

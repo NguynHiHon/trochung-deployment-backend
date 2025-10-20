@@ -27,11 +27,20 @@ cloudinary.config({
 
 const app = express();
 
+
+
+const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // allow tools like curl
+    if (Array.isArray(frontendUrl) ? frontendUrl.includes(origin) : origin === frontendUrl) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'token']
+  methods: ['GET','POST','PUT','DELETE'],
+  allowedHeaders: ['Content-Type','Authorization','token']
 }));
 
 const mongoUrl = process.env.MONGO_URL;
