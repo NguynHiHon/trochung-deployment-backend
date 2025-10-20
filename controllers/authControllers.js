@@ -249,10 +249,19 @@ const authControllers = {
   startRegistration: async (req, res) => {
     try {
       const { firstName, lastName, phone, email, password } = req.body || {};
+      console.log('=== START REGISTRATION ===');
+      console.log('Incoming registration payload:', { firstName, lastName, phone, email, password });
 
       // Kiểm tra các trường dữ liệu
-      if (!firstName || !lastName || !phone || !email || !password) {
-        return res.status(400).json({ success: false, error: 'Thiếu thông tin.' });
+      const missing = [];
+      if (!firstName) missing.push('firstName');
+      if (!lastName) missing.push('lastName');
+      if (!phone) missing.push('phone');
+      if (!email) missing.push('email');
+      if (!password) missing.push('password');
+      if (missing.length > 0) {
+        console.warn('Registration failed - missing fields:', missing);
+        return res.status(400).json({ success: false, error: 'Thiếu thông tin.', missing });
       }
 
       // Kiểm tra nếu email đã tồn tại trong PendingUser
@@ -277,8 +286,10 @@ const authControllers = {
       });
       await pendingUser.save();
 
-      // Gửi email xác minh
-      await sendVerificationCode(email, code);
+      // Gửi email xác minh (không chặn response) - chạy bất đồng bộ
+      sendVerificationCode(email, code)
+        .then(() => console.log('Verification email sent (async)'))
+        .catch((mailErr) => console.error('sendVerificationCode failed (async):', mailErr));
 
       return res.json({ success: true, message: 'Đã gửi mã xác minh tới email.' });
     } catch (err) {
