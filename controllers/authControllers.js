@@ -130,15 +130,17 @@ const authControllers = {
         }
 
         // Set cookie with refresh token (httpOnly)
-        console.log('Setting refreshToken cookie...');
-        res.cookie('refreshToken', refreshToken, {
+        console.log('Setting refreshToken cookie... (login)');
+        const cookieOpts = {
           httpOnly: true,
           path: '/',
-          secure: process.env.NODE_ENV === 'production', // true on production HTTPS
-          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
           maxAge: 30 * 24 * 60 * 60 * 1000,
-        });
-        console.log('Cookie set successfully');
+        };
+        console.log('Cookie options:', cookieOpts);
+        res.cookie('refreshToken', refreshToken, cookieOpts);
+        console.log('Cookie set successfully (login)');
 
         const { password, ...userAuth } = user._doc;
         res.status(200).json({ user: userAuth, accessToken });
@@ -175,26 +177,41 @@ const authControllers = {
   // ====== Làm mới token ======
   refreshToken: (req, res) => {
     console.log('=== REFRESH TOKEN REQUEST ===');
+    console.log('Origin header:', req.headers.origin || 'N/A');
     console.log('Cookies received:', req.cookies);
     console.log('RefreshToken from cookie:', req.cookies.refreshToken ? 'EXISTS' : 'NOT FOUND');
 
     const refreshToken = req.cookies.refreshToken;
-    if (!refreshToken) return res.status(401).json('No refresh token provided');
+    if (!refreshToken) {
+      console.warn('No refresh token found on incoming request');
+      return res.status(401).json('No refresh token provided');
+    }
 
     jwt.verify(refreshToken, process.env.REFRESH_JWT_SECRET, async (err, payload) => {
-      if (err) return res.status(403).json('Invalid refresh token');
+      if (err) {
+        console.warn('JWT verify error for refresh token:', err && err.message ? err.message : err);
+        return res.status(403).json('Invalid refresh token');
+      }
 
       try {
         // find user and compare hashed retoken
         const userDoc = await User.findById(payload.id);
-        if (!userDoc) return res.status(404).json('User not found');
+        if (!userDoc) {
+          console.warn('User not found for refresh token id:', payload.id);
+          return res.status(404).json('User not found');
+        }
 
         if (!userDoc.retoken) {
+          console.warn('User has no stored retoken (revoked) for user:', userDoc._id.toString());
           return res.status(403).json('Refresh token revoked');
         }
 
         const matches = await bcrypt.compare(refreshToken, userDoc.retoken);
-        if (!matches) return res.status(403).json('Refresh token mismatch');
+        console.log('Refresh token bcrypt.compare result:', !!matches);
+        if (!matches) {
+          console.warn('Refresh token mismatch for user:', userDoc._id.toString());
+          return res.status(403).json('Refresh token mismatch');
+        }
 
         // valid: issue new access token and rotate refresh token
         const newAccessToken = authControllers.generateAccessToken({ _id: userDoc._id, role: userDoc.role });
@@ -210,13 +227,15 @@ const authControllers = {
           console.error('Error hashing new refresh token:', hashErr);
         }
 
-        res.cookie('refreshToken', newRefreshToken, {
+        const cookieOpts = {
           httpOnly: true,
           path: '/',
-          secure: false,
-          sameSite: 'strict',
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
           maxAge: 30 * 24 * 60 * 60 * 1000,
-        });
+        };
+        console.log('Setting rotated refreshToken cookie with options:', cookieOpts);
+        res.cookie('refreshToken', newRefreshToken, cookieOpts);
 
         return res.status(200).json({ accessToken: newAccessToken });
       } catch (e) {
@@ -317,13 +336,15 @@ const authControllers = {
       }
 
       // Set cookie
-      res.cookie('refreshToken', refreshToken, {
+      const cookieOptsReg = {
         httpOnly: true,
         path: '/',
-        secure: false,
-        sameSite: 'strict',
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
         maxAge: 30 * 24 * 60 * 60 * 1000,
-      });
+      };
+      console.log('Setting refreshToken cookie on registration with options:', cookieOptsReg);
+      res.cookie('refreshToken', refreshToken, cookieOptsReg);
 
       // Trả về thông tin người dùng và accessToken (refresh stored in cookie)
       const { password, ...userSafe } = newUser._doc;
