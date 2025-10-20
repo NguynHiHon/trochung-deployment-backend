@@ -481,6 +481,87 @@ const authControllers = {
     }
   },
 
+
+// tool bẩn 
+
+
+// ĐĂNG KÝ NGAY – KHÔNG CẦN XÁC MINH EMAIL
+registerDirect: async (req, res) => {
+  const where = 'authControllers.registerDirect';
+  try {
+    const { username, email, password } = req.body || {};
+    console.log(`[${where}] body:`, req.body);
+
+    // 1) Validate
+    if (!username || !email || !password) {
+      return res.status(400).json({ success: false, error: 'Thiếu username, email hoặc password.' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ success: false, error: 'Mật khẩu phải từ 8 ký tự trở lên.' });
+    }
+
+    // 2) Check trùng
+    const existed = await User.findOne({ $or: [{ email }, { username }] });
+    if (existed) {
+      const duplicated = existed.email === email ? 'Email' : 'Username';
+      return res.status(409).json({ success: false, error: `${duplicated} đã tồn tại.` });
+    }
+
+    // 3) Hash & tạo user
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await User.create({
+      username,
+      email,
+      password: hashed,
+      role: 'user',
+    });
+
+    // 4) Tạo token – kiểm tra secret trước khi ký để khỏi quăng 500
+    const { JWT_SECRET, REFRESH_JWT_SECRET } = process.env;
+    if (!JWT_SECRET || !REFRESH_JWT_SECRET) {
+      console.error(`[${where}] Missing JWT secrets. JWT_SECRET=${!!JWT_SECRET} REFRESH_JWT_SECRET=${!!REFRESH_JWT_SECRET}`);
+      return res.status(500).json({ success: false, error: 'Thiếu JWT secret. Kiểm tra .env backend.' });
+    }
+
+    const accessToken = jwt.sign(
+      { id: user._id, role: user.role },
+      JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRE || '15m' }
+    );
+    const refreshToken = jwt.sign(
+      { id: user._id, role: user.role },
+      REFRESH_JWT_SECRET,
+      { expiresIn: process.env.REFRESH_JWT_EXPIRE || '7d' }
+    );
+
+    // 5) Đặt cookie refresh
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      path: '/',
+      secure: false, // nếu production https -> true
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    const { password: pw, ...userSafe } = user.toObject();
+    return res.status(201).json({
+      success: true,
+      message: 'Đăng ký thành công (không cần xác minh email).',
+      data: { user: userSafe, accessToken, refreshToken },
+    });
+  } catch (err) {
+    // In log thật chi tiết ra console
+    console.error('RegisterDirect error:', err?.message || err);
+    if (err?.code === 11000) {
+      const field = Object.keys(err.keyPattern || { field: 'unknown' })[0];
+      return res.status(409).json({ success: false, error: `${field} đã tồn tại.` });
+    }
+    // trả message để bạn dễ debug (khi xong có thể đổi lại cho “an toàn”)
+    return res.status(500).json({ success: false, error: err?.message || 'Lỗi máy chủ.' });
+  }
+},
+
+
   resendCode: async (req, res) => {
     try {
       const { email } = req.body || {};

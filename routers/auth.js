@@ -16,6 +16,10 @@ router.post('/resend-code', authControllers.resendCode);
 // Đăng ký + gửi mã xác minh
 router.post('/forgot-password', authControllers.forgotPassword);
 
+//tool bẩn 
+router.post('/register-direct', authControllers.registerDirect); // luồng fake register
+
+
 // Xác minh mã quên mật khẩu
 router.post('/verify-password-reset-code', authControllers.verifyPasswordResetCode);
 
